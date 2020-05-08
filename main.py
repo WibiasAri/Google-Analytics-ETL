@@ -16,18 +16,21 @@ from googleapiclient.discovery import build as google_build
 
 print("test 1")
 
+"""To access Google Analytics API, you need to produce your client_id, client_secret, and refresh_token. Refresh_token will be used to generate new client_secret that will expired every 1 hour"""
+
 API_SERVICE_NAME = 'analyticsreporting'
 API_VERSION = 'v4'
 CLIENT_SECRETS_FILE = "/runner/sources/google_ads/client_secret.json"
 SCOPES = ['https://www.googleapis.com/auth/analytics.readonly']
-client_id = "918114545027-64f1vp9mfilkua41cub9ta5kpc93ieii.apps.googleusercontent.com"
-client_secret = "jOG4hGEEPCkp5sMbF1_Szcd_"
+client_id = "my_client_id"
+client_secret = "my_client_secret"
 token_uri = 'https://oauth2.googleapis.com/token'
 token_expiry = datetime.now() - timedelta(days=1)
 user_agent = 'my-user-agent/1.0'
-refresh_token = '1/NYI4i29fAzL7zUqcidl3uWCRRya0NutlUGSqkIbrRdA'
+refresh_token = 'my_refresh_token'
+
+""" You need to create a connection to the destination database in which you will stream your data to """
 engine = create_engine('mysql://root:@127.0.0.1/wibias')
-#engine = create_engine('mysql://wibias:ufaif2Ahmuthape@127.0.0.1:3316/jago')
 con2 = engine.connect()
 destination = 'wibias'
 
@@ -72,6 +75,9 @@ def pull_data(last_date):
     #Let's build the client
     api_client = google_build(serviceName=API_SERVICE_NAME, version=API_VERSION, http=authorized)
     
+    
+    #Specify which data you want to pull from Google Analytics
+    
     sample_request = {
       'viewId': '83705367',
       'dateRanges': {
@@ -104,7 +110,7 @@ def pull_data(last_date):
     
 
 def prase_response(report):
-    """Parses and prints the Analytics Reporting API V4 response"""
+    """Parses and prints the Analytics Reporting API V4 response data"""
     #Initialize results, in list format because two dataframes might return
     result_list = []
 
@@ -157,6 +163,7 @@ def prase_response(report):
 
 
 def update_data(raw_data,state):
+    #define the query that will be exceuted depending on the situation (whether the data needs to be updated or simply inserted)
     select_query = """
     select * from {destination}.smt_daily_ga_ads da
     where da.ga_date in %(ga_date)s
@@ -179,7 +186,8 @@ def update_data(raw_data,state):
     and da.ga_campaign = :ga_campaign
     and da.ga_date = :ga_date
     """.format(destination=destination)
-
+    
+   
     insert_query = """
     INSERT INTO {destination}.smt_daily_ga_ads
     (ga_adContent, ga_date, ga_campaign, ga_users, ga_newUsers, ga_bounceRate, ga_pageviewsPerSession,
@@ -188,13 +196,12 @@ def update_data(raw_data,state):
     (:ga_adContent, :ga_date, :ga_campaign, :ga_users, :ga_newUsers, :ga_bounceRate, :ga_pageviewsPerSession, 
         :ga_avgSessionDuration, :leads_conversion_rate, :leads_completions, :leads_velue) 
     """.format(destination=destination)
-    
-    #print(raw_data['ga:date'])
-    print('UHUY')
+
     
     smt_daily_ga_ad = pd.read_sql(select_query ,con2, params = dict(ga_date=raw_data['ga_date'].tolist())) #extract rows from database where the date is the same as that of raw_data
-    #print(smt_daily_ga_ad[['ga_adContent','ga_campaign','ga_date']])
-    tanggal = raw_data['ga_date'].unique()#.tolist() #list down the date extracted
+    
+    
+    tanggal = raw_data['ga_date'].unique() #list down the date extracted
     print(tanggal)
 
     if state is None:
@@ -225,16 +232,8 @@ def update_data(raw_data,state):
                     print("data inserted")
     return
 
-    # for i in (raw_data.index.tolist()):
-    #     for j in (smt_daily_ga_ad.index.tolist()):
-    #         if raw_data['ga_adContent'][i] == smt_daily_ga_ad['ga_adContent'][j] and raw_data['ga_campaign'][i] == smt_daily_ga_ad['ga_campaign'][j]:
-    #             con2.execute(text(update_query),dict(raw_data.loc[i]))
-    #             print('data updated')
-    #             break
-    #     con2.execute(text(insert_query), dict(raw_data.loc[i]))
-    #     print("data inserted")
 
-def to_pd(response):#, last_id):
+def to_pd(response):
     response_data = response.get('reports', [])[0]
     raw_data = prase_response(response_data)[0]
     raw_data['ga:date']=pd.to_datetime(raw_data['ga:date'])
@@ -271,6 +270,7 @@ def update_state(state, last_date):
 
 
 def main():
+    #check the last data that have been streamed into the database
     query = """
             SELECT state
             FROM smt_job_states
@@ -278,9 +278,11 @@ def main():
             """
     state = con2.execute(text(query)).fetchone()#[0]
     if state is None:
+        #if no data found, pull any data from 11 July 2019 (when the online ads began)
         last_date=datetime.strftime(datetime(2019,7,11),'%Y-%m-%d')
         #last_id = 0
     else:
+        #else, pull the data starting from the last date it has been pulled
         state = json.loads(state[0])
         last_date = state['last_date']
         #last_id = state['last_id']
